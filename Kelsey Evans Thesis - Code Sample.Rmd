@@ -1,0 +1,796 @@
+---
+title: "All Pop Music Sounds the Same These Days: A Statistical Investigation Into Chord Progressions In Popular Music"
+author: "Kelsey Evans"
+date: "5/7/21"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width=6, fig.height=4,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+################################################################################
+options(scipen = 999)
+library(dplyr)
+library(kableExtra)
+library(fpc)
+
+################################################################################
+# Read in the data: 
+
+chordData <- read.csv("hook.csv", as.is = TRUE) 
+billboardbig <- read.csv("Hot Stuff.csv", as.is = TRUE)
+billboardsmall <- read.csv("billboardHot100_1999-2019.csv", as.is = TRUE) 
+total <- read.csv("total.csv", as.is = TRUE) 
+	total <- total[, -1]
+artistDf <- read.csv("artistDf.csv", as.is = TRUE)
+
+################################################################################
+
+```
+
+## Contents 
+### 1. Introduction
+### 2. Data
+### 3. Visualizations/transformations
+### 4. Results
+* Genres
+* Cluster analysis
+* Linear model
+* Positioning of non-billboard songs
+* Bootstrap on Gender
+
+### 5. Conclusion
+### 6. Citations
+
+Supplementary info: 
+
+* hook data cleaning.R is the web scrape for the chordData csv
+* WEBPAGES is a folder of .html files used for this webscrape
+* ALL DATA CLEANING HERE.R is all the data cleaning to create total.csv
+* hook.csv is the chord progression data
+* billboardHot100_1999-2019.csv is the first set of Billboard data
+* Hot Stuff.csv is the second set of Billboard data
+* artistDf.csv is the artist democraphic data
+* total.csv is a merge of all of the above .csv files
+* Final project.Rmd contains all code
+* Final project.pdf does not contain code
+
+\newpage
+
+## Introduction
+
+I used to play classical piano, attend competitions, and practice daily after
+school. These days, I only play pop music for my friends. I pull up the chords, 
+get the rhythm down, and sing over top of the simple structure I've created. I
+found that many songs use the same chords, so after learning one set, I'm able 
+to play five or ten different songs. For instance, "I'm Yours" by Jason Mraz, 
+"Umbrella" by Rihanna, and "Hey Soul Sister" by Train can all be played using
+the chords of C, G, A minor, and F. 
+
+For those unfamiliar with music, "chords" are the bones or structure behind a
+song, which the melody is added on top of. Chords can be recorded in two
+different ways - using letters or using numbers. The above example using letters
+means that the song has four chords, made up of three notes each (a chord cannot
+be "consonant"/"sound good" with more than three distinct notes, similar to how
+more than three points do not always create a plane. Not all songs follow this
+convention, because sometimes dissonance can add to a song musically, but most 
+of but most of the time it holds). 
+
+The more common way to record chords uses numbers instead. The chords C, G, Am, 
+and F become I, V, vi, IV. This is to take into account "transposition." In 
+other words, if one played the song higher or lower, the sound, or letter notes, 
+would be different, but the underlying structure would be the same. I could sing
+"I'm Yours" in the key of C, using C, G, Am, and F, or in the key of, say, G, 
+using G, D, Em, and C. Both of these sound the same, so they are both notated
+I, V, vi, IV. 
+
+A final note is that the lowercase refers to a minor, or "sad sounding" chord, 
+while the uppercase refers to a major, or more "happy sounding" chord. There are
+other types of chords other than repeats of four numbers, but it isn't necessary
+to understand the exact meaning of each one, just that each set of numbers 
+refers to the different ways a song can be structured. 
+
+I chose to investigate how these different chord structures might relate to a
+song's popularity. For instance, the chord I listed above, the I, V, vi, IV, is 
+colloquially known to be the most catchy progression in all of pop music. Is 
+this true? Do songs using this progression do better on the music charts? Do 
+they stay there longer? What about when you take into account the demographics 
+of the artist, the year the song was released, or the listed genre of the song? 
+All of these are exploratory questions that I wondered before digging into the 
+data. 
+
+## The Data
+
+I used four different sources for data, which I will cite at the end of the 
+document. The first is a data set that I created using quite a bit of html web
+scraping, from a music theory website called "hooktheory." This website contains
+crowd-sourced chord progression data on about 2,000 songs. Here is a sample of 
+that data - 
+
+### Chord data:
+
+```{r, echo = FALSE}
+set.seed(10)
+
+kable(chordData[sample(nrow(chordData), 4), ], "latex", longtable = T, 
+			booktabs = T) %>% kable_styling(font_size = 12)
+```
+
+The next two sets of data are Billboard 100 data sets. The first is from 1999-
+2020, but includes information on the genre of the songs. The second is from 
+1958-present, but does not include genre labels. Again, a sample from each data
+set - 
+
+\newpage
+
+### 1999-2019 data: 
+
+```{r, echo = FALSE}
+set.seed(18)
+kable(billboardsmall[sample(nrow(billboardsmall), 4), c(2, 3, 4, 5, 6, 7, 9)],
+			"latex", longtable = T, booktabs = T) %>% kable_styling(font_size = 8)
+```
+
+### 1958-2020 data: 
+
+```{r, echo = FALSE}
+set.seed(2)
+kable(billboardbig[sample(nrow(billboardbig), 4), c(2, 3, 5, 8, 9, 10)],
+			"latex", longtable = T, booktabs = T) %>% kable_styling(font_size = 7)
+```
+
+The final data set is some collected information about artist demographics. That
+set looks like this - 
+
+### Artist data: 
+
+```{r, echo = FALSE}
+set.seed(120)
+kable(artistDf[sample(nrow(artistDf), 4), c(2, 3, 6, 7, 8)],
+			"latex", longtable = T, booktabs = T) %>% kable_styling(font_size = 12)
+```
+
+There were a lot of problems when it came to merging these data sets. Many songs
+were covered by other artists, so didn't intially make it into the merge. Out of 
+the 2000 songs from the chord data, I had to fix about 200 of them by hand. I 
+did a left merge between the chord data and the billboard data. To do this, I
+had to hand-code a few things: If a song was in the chord data but not the 
+billboard charts, I marked it as having been on the charts for zero weeks, and 
+I marked its peak and weekly positions on the chart as 101 for a placeholder
+(the lowest place on the chart is 100). This way, I didn't have to lose any of 
+the chord data. I also did a left merge between the billboard data and the 
+artist demographic data/genre data, which didn't exist for all of the 1958-
+present billboard songs. This left the merged data with NAs in spots, but 
+keeping as much data as I could. The merged data set has the following 
+categories: 
+
+```{r, echo = FALSE}
+names(total)
+```
+
+These are as follows: 
+
+* "Artist" is the singer or band
+* "Title" is the name of the song
+* "ChordProg" is the progression from the chord data
+* "WeekID" is the week that the song was on the chart (songs will appear in the 
+data set more than once if they were on the chart for multiple weeks) 
+* "Week.Position" is the position on the chart that week
+* "Instance" is the number of distinct times the song has been on the charts
+* "Previous.Week.Position" is where the song was on the charts the previous week
+* "Peak.Position" is the highest the song has ever been on the charts
+* "Weeks.on.Chart" is how many weeks, at the point of the WeekID, a song has 
+been on the charts
+* "Genre" is a list of genres the song could fall under
+* "Followers" is the number of Spotify followers the artist has
+* "NumAlbums" is the number of albums the artist has
+* "Gender" is the gender of the artist
+* "Group.Solo" is whether the artist is a solo artist or a group/band
+
+
+## Visualizations/Transformations 
+
+I will lay out what some of the variables look like. There are 21 types of 
+progressions, with the combinations of I, V, vi, and VI making up most of them, 
+albeit in different orders: 
+
+```{r, echo = FALSE}
+# Chord progressions
+kable(table(total$ChordProg))
+```
+
+The gender of the artists skews slightly towards more male artists: 
+
+```{r, echo = FALSE}
+# Gender
+kable(table(total$Gender))
+```
+
+\newpage
+
+All of the numeric variables skew extremely right: 
+
+```{r, echo} 
+# Followers
+hist(total$Followers, col = "green", main = "Histogram of Spotify Followers", 
+		 xlab = "Spotify Followers")
+```
+
+```{r}
+# Weeks on chart
+hist(total$Weeks.on.Chart, col = "blue", main = "Histogram of Weeks on Chart", 
+		 xlab = "Weeks on Chart")
+```
+
+```{r}
+# Week position
+hist(total$Week.Position, col = "red", main = "Histogram of Week Position",
+		 xlab = "Week Position")
+```
+
+```{r}
+# Peak position
+hist(total$Peak.Position, col = "pink", main = "Histogram of Peak Position", 
+		 xlab = "Peak Position")
+```
+
+```{r}
+# Create logged variables
+# Going to code ones for one week as 0.1
+# And ones for zero weeks as 0
+
+total$logWeeks <- log(total$Weeks.on.Chart)
+total$logWeeks[is.infinite(total$logWeeks)] <- 0
+total$logWeekPosition <- log(total$Week.Position)
+total$logWeekPosition[is.infinite(total$logWeekPosition)] <- 0
+total$logPeakPosition <- log(total$Peak.Position)
+total$logPeakPosition[is.infinite(total$logPeakPosition)] <- 0
+total$logFollowers <- log(total$Followers)
+total$logFollowers[is.infinite(total$logFollowers)] <- 0
+
+total$logWeeks[total$logWeeks == 0] <- 0.1
+total$logFollowers[total$logFollowers== 0 ] <- 0.1
+```
+
+Because of this, I chose to also create a logged version of each numeric
+variable. This helps not only the right skew situation, but also puts the
+numeric variables on a comparable scale for analysis. (I changed -Inf to zero 
+for zero weeks on the chart, and 0 to 0.1 for one week on the chart, to create
+a difference between 0 and 1 week). and Here is an example of
+some boxplots looking at weeks on chart grouped by the chord 
+progression, in the logged and not-logged versions: 
+
+```{r}
+attach(total)
+boxplot(logWeeks ~ ChordProg, las = 2, main = 
+					"Chord Prog vs. Log Weeks on Chart", 
+				col = "light blue", xlab = "")
+```
+
+```{r}
+boxplot(Weeks.on.Chart ~ ChordProg, las = 2, main = 
+					"Chord Prog vs Weeks on Chart",
+				col = "lavender", xlab = "")
+```
+
+Here is a correlation matrix of the logged numeric variables: 
+
+```{r}
+lognumerics <- total[, 15:18]
+kable(cor(lognumerics, use = "complete.obs"))
+```
+
+\newpage
+
+As expected, "Weeks on chart" is negatively correlated with position on the 
+chart and positively correlated with "Followers", which is also negatively 
+correlated with the position variables. 
+
+The final thing to note about the data is that there is a slight concern that 
+the data for which there is chord information is not distributed the same as the
+billboard data. Because the data is crowdsourced on the internet, it skews
+towards a younger audience, specifically, from a glance, probably millennial or
+older Gen-Z individuals (the chord data peaks in the early 2010's). 
+
+```{r}
+# Change date formats
+billboardbig$WeekID <- as.Date(billboardbig$WeekID, format = "%m/%d/%Y")
+total$WeekID <- as.Date(total$WeekID, format = "%m/%d/%Y")
+
+# Scrape year from date
+billboardyears <- substring(billboardbig$WeekID, 1, 4)
+totalyears <- substring(total$WeekID, 1, 4)
+	totalyears <- totalyears[!is.na(totalyears)]
+
+
+hist(as.numeric(billboardyears[!duplicated(billboardbig$Song)]), col = "light yellow", main = "Data proportions", 
+		 xlab = "Billboard songs (Yellow) vs. Chord Data songs (Purple)")
+
+hist(as.numeric(totalyears[!duplicated(total$Title)]), col = "purple", 
+		 add = TRUE)
+```
+
+The shape of the billboard data (yellow) with fewer individual songs around the 
+90s/00s/10s could mean that songs are staying on the charts for longer during 
+that period of time. (Ordinarily, the "unit" in the billboard data is a 
+song*year, but in this histogram I am looking only at the data distribution of 
+each unique song, not each unique observation.) 
+
+## Results 
+
+### Genres 
+
+To begin constructing some models, I first wanted to make sure I had as much 
+predicting power as possible. One thing I did was split up the "Genre" column, 
+which was a separate comma-separated vector for each row, into a matrix of 
+TRUE/FALSE for each genre. I then restricted to only genres which were tagged on
+more than ten songs. This way, the model isn't overfit because it takes in some 
+genres that were only tagged on a song or two. After working on genres, the 
+columns included in the data are as
+follows: 
+
+```{r}
+# Split genre column by comma
+total$Genre <- as.character(total$Genre)
+total$Genre <- gsub(";", "", total$Genre)
+genres <- strsplit(total$Genre, ",")
+
+# Find max genres
+genres <- lapply(genres, `length<-`, max(lengths(genres)))
+
+# Create matrix that lists each genre separately
+genres <- matrix(unlist(genres), ncol = 15, byrow = TRUE)
+
+# Make vector of all genres
+genres1 <- genres[!duplicated(as.vector(genres)) & !is.na(genres)]
+
+# New matrix for all genres
+genres2 <- matrix(NA, nrow = nrow(total), ncol = length(genres1))
+
+genres1 <- paste(",", genres1, ",", sep = "") 
+
+# Put commas in front of Genre list to create better individual searching
+total$Genre <- paste(",", total$Genre, ",", sep = "")
+
+# Check genres list against genre column, fill in genre matrix with T/F
+for (i in 1:nrow(total)){
+	for (j in 1:length(genres1)){
+		genres2[i, j] <- grepl(genres1[j], total$Genre[i])
+	}
+}
+
+
+genres1 <- gsub(",", "", genres1) 
+
+colnames(genres2) <- genres1
+
+# Check how many genres are tagged on 10+ songs
+totalsongs <- total$Title
+uniquesongs <- which(!duplicated(totalsongs))
+genres3 <- genres2[uniquesongs, ]
+
+# Create vectors of genres to keep and delete
+n <- 24
+topn <- tail(sort(colSums(genres3)), n)
+deletegenres <- head(sort(colSums(genres3)), length(genres1)-n)
+keepgenres <- names(topn)
+deletegenres <- names(deletegenres)
+
+# Remove extra genres
+genres4 <- genres2[, keepgenres]
+colnames(genres4) <- keepgenres
+
+# Put genre matrix back onto data frame 
+total[, 19:42] <- genres4
+colnames(total)[19:42] <- keepgenres
+
+names(total)
+```
+
+### Cluster Analysis 
+
+I was curious about clustering the data both on a chord level and a song level. 
+In terms of on the chord level, I wanted to see, for instance, if songs with the
+same chords, but simply in another order, seemed to be grouped together. In 
+terms of on the song level, I wanted to see if the number of groupings seemed to
+line up in any way with the number of chord progressions. I tried many different
+methods of clustering. I chose to reproduce as an example here the method using
+maximum difference and complete clustering, but the different methods all give
+fairly similar answers. The numeric variables
+I used were the logs of Week Position, Peak Position, and Weeks on chart.
+
+First, I clustered the data on a chord level. The pairs plot does not show 
+obvious clusters. The dendrogram also does not show extremely obvious clusters, 
+but when arbitrarily picking, for instance, four clusters, chords that are the
+same but in another order do seem to be grouped together, which is very
+interesting indeed! This is true for various methods of clustering that I tried.
+In the left cluster, we can see four different permutations of the I.V.vi.IV 
+progression. These show up in the DA plot as well. 
+
+This isn't necessarily extremely useful for other analyses, but it is very neat
+to see that in these visualizations, the iterations of the chord progression 
+mentioned in the beginning seem to stick together. 
+
+
+```{r}
+attach(total)
+# Create clusters
+clust <- aggregate(logPeakPosition ~ ChordProg, FUN = mean)
+clust2 <- aggregate(logWeeks ~ ChordProg, FUN = mean)
+clust3 <- aggregate(logWeekPosition ~ ChordProg, FUN = mean)
+
+clust <- cbind(clust, clust2[, 2], clust3[, 2])
+rownames(clust) <- clust[, 1]
+clust <- clust[, c(2:4)]
+colnames(clust) <- c("logPeakPosition", "logWeeks", "logWeekPosition")
+
+# Pairs plot
+pairs(clust)
+```
+
+```{r}
+# Dendrogram plot
+dist1 <- dist(clust, method = "maximum")
+clust1 <- hclust(dist1)
+plot(clust1,labels = rownames(clust), cex=0.6,ylab="Distance",
+		 main="Clustering of ChordProgs, Maximum & Complete, 4 clusters", 
+		 xlab = "Clusters")
+rect.hclust(clust1, k=4)
+```
+
+```{r}
+# DA plot
+cuts <- cutree(clust1, 4)
+
+plotcluster(clust, cuts, main="4 Cluster Solution in DA Space",
+xlab="First Discriminant Function", ylab="Second Discriminant Function")
+```
+
+\newpage
+
+Next, I clustered the data on the song level. 
+
+```{r}
+attach(total)
+
+clust.s <- aggregate(logPeakPosition ~ Title, FUN = mean)
+clust2.s <- aggregate(logWeeks ~ Title, FUN = mean)
+clust3.s <- aggregate(logWeekPosition ~ Title, FUN = mean)
+
+clust.s <- cbind(clust.s, clust2.s[, 2], clust3.s[, 2])
+rownames(clust.s) <- clust.s[, 1]
+clust.s <- clust.s[, c(2:4)]
+colnames(clust.s) <- c("logPeakPosition", "logWeeks", "logWeekPosition")
+
+pairs(clust.s)
+```
+
+Here, there also do not seem to be
+obvious clusters at all - rather, it just looks like a fairly smooth correlation
+graph. It is possible that the songs cluster by chord and that cannot be seen
+with this visualization. In the linear model section, we will be able to see 
+whether or not the songs using various chords are statistically significantly 
+different from one another. 
+
+### Linear Model 
+
+I created a linear model using the following variables: 
+
+```{r}
+total$ChordProg <- as.factor(total$ChordProg)
+chordnames <- levels(total$ChordProg.f)
+
+log_analysis_subset <- total[, c(3, 4, 6, 12:42)]
+```
+
+The reason that the genres are each their own column while the chord progression
+is a single factor is because there can only be one chord progression per song, 
+but there can be up to 15 genres, based on the Billboard tagging system. 
+
+```{r}
+lm1 <- lm(logWeeks ~ ., data = log_analysis_subset)
+sum <- summary(lm1)
+summary <- as.data.frame(sum$coefficients, row.names = FALSE)
+summary$variables <- rownames(sum$coefficients)
+summary$significant <- NA
+summary <- summary[, c(5, 1, 2, 3, 4, 6)]
+colnames(summary) <- c("Variables","Estimate", "Std_Error", "t_value", 
+											 "probability", "significant")
+
+summary <- summary %>% mutate(significant =
+                     case_when(probability <= 0.001 ~ "***", 
+                              probability <= 0.01 & 
+                     						probability > 0.001 ~ "**",
+                              probability <= 0.05 & 
+                     						probability > 0.01 ~ "\\*",
+                     					probability <= 0.1 & 
+                     						probability > 0.05 ~ "",
+                     					probability > 0.1 ~ " "))
+
+summary[, 2:5] <- round(summary[, 2:5], 3)
+```
+
+Here are the results of the model predicting Weeks on Chart using all the other
+variables. The R^2 is 54%. I am able to achieve a much higher R^2 using all the
+genres as predictors, but it is artificially high because some genres are only
+attached to a song or two. In this model as well as rearranging the model to a 
+contrast sum, I was pleased to see that songs using several of the chords that 
+fall into the I.V.vi.IV category (in that order and others) perform 
+statistically significantly better than the average song. The confidence interval
+for the coefficient on I.V.vi.IV is (0.099, 0.289). This is of course the logged
+version, so the actual number of weeks on the chart would be between one and two
+weeks more than the average song.
+
+```{r}
+kable(summary)
+```
+
+R^2: 
+
+```{r}
+sum$r.squared
+```
+
+
+In a second model, I did the same thing, but with Peak Position as the 
+response variable instead: 
+
+```{r}
+lm2 <- lm(logPeakPosition ~ ., data = log_analysis_subset)
+sum2 <- summary(lm2)
+summary2 <- as.data.frame(sum2$coefficients, row.names = FALSE)
+summary2$variables <- rownames(sum2$coefficients)
+summary2$significant <- NA
+summary2 <- summary2[, c(5, 1, 2, 3, 4, 6)]
+colnames(summary2) <- c("Variables","Estimate", "Std_Error", "t_value", "probability",
+											 "significant")
+
+summary2 <- summary2 %>% mutate(significant =
+                     case_when(probability <= 0.001 ~ "***", 
+                              probability <= 0.01 & probability > 0.001 ~ "**",
+                              probability <= 0.05 & probability > 0.01 ~ "\\*",
+                     					probability <= 0.1 & probability > 0.05 ~ ".",
+                     					probability > 0.1 ~ " "))
+
+summary2[, 2:5] <- round(summary2[, 2:5], 3)
+```
+
+
+```{r}
+kable(summary2)
+```
+
+R^2: 
+
+```{r}
+sum2$r.squared
+```
+
+Adjusted R^2:
+
+```{r}
+sum2$adj.r.squared
+```
+
+
+Using this response instead, a higher R^2 of 76% is achieved. Interestingly, 
+here it doesn't seem like the chords that I have suggested are uniformly doing 
+better (in this case would mean negative coefficients). I wonder if all the songs
+tagged as being in "101st" place on the chart could be affecting this in any way.
+
+Here is a chart of the predicted vs. actual values using this model: 
+
+```{r}
+plot(predict(lm2, log_analysis_subset), log_analysis_subset$logPeakPosition,
+      xlab="predicted",ylab="actual", col = "blue")
+ abline(a=0,b=1, col = "red", lwd = 3)
+```
+
+### Positioning of Non-Billboard Songs 
+
+I wondered about was, regarding the position on the chart, 
+whether the maximum position matters. I had tagged all NON-billboard songs as 
+having a position of 101 on the chart, but this would mathematically imply 
+something like, that they "almost" made it on the chart, which is almost
+certainly not true for all of the songs. I decided to re-code them as 200, to 
+see what this would do to the model and correlations. I re-code to 200, then 
+took the log again. Here are the correlations: 
+
+```{r}
+total$Peak.Position2 <- total$Peak.Position
+total$Week.Position2 <- total$Week.Position
+
+total$Peak.Position2[total$Peak.Position2 == 101] <- 200
+total$Week.Position2[total$Week.Position2 == 101] <- 200
+
+total$logWeekPosition2 <- log(total$Week.Position2)
+total$logWeekPosition2[is.infinite(total$logWeekPosition2)] <- 0
+total$logPeakPosition2 <- log(total$Peak.Position2)
+total$logPeakPosition2[is.infinite(total$logPeakPosition2)] <- 0
+
+names(total)
+
+lognumerics2 <- total[, c(15, 45, 46, 18)]
+kable(cor(lognumerics2, use = "complete.obs"))
+kable(cor(lognumerics, use = "complete.obs"))
+```
+
+\newpage
+
+The correlations remain pretty much exactly the same. I ran the model predicting
+peak position again, and the model also changes essentially not at all. The R^2 
+remains the same: 
+
+```{r}
+log_analysis_subset2 <- total[, c(3, 4, 6, 12:15, 18:42, 45, 46)]
+
+lm3 <- lm(logPeakPosition2 ~ ., data = log_analysis_subset2)
+sum3 <- summary(lm3)
+summary3 <- as.data.frame(sum3$coefficients, row.names = FALSE)
+summary3$variables <- rownames(sum3$coefficients)
+summary3$significant <- NA
+summary3 <- summary3[, c(5, 1, 2, 3, 4, 6)]
+colnames(summary3) <- c("Variables","Estimate", "Std_Error", "t_value", "probability",
+											 "significant")
+
+summary3 <- summary3 %>% mutate(significant =
+                     case_when(probability <= 0.001 ~ "***", 
+                              probability <= 0.01 & probability > 0.001 ~ "**",
+                              probability <= 0.05 & probability > 0.01 ~ " *",
+                     					probability <= 0.1 & probability > 0.05 ~ ".",
+                     					probability > 0.1 ~ " "))
+
+summary3[, 2:5] <- round(summary3[, 2:5], 3)
+
+sum3$r.squared
+```
+
+One more model I wanted to try was actually without the chord data - to see if
+it indeed added any predicting power to the model. I used the peak position 
+variable with the original tagging as 101 for non-Billboard songs: 
+
+```{r}
+log_analysis_subset3 <- total[, c(4, 6, 12:42)]
+
+lm4 <- lm(logPeakPosition ~ ., data = log_analysis_subset3)
+sum4 <- summary(lm4)
+summary4 <- as.data.frame(sum4$coefficients, row.names = FALSE)
+summary4$variables <- rownames(sum4$coefficients)
+summary4$significant <- NA
+summary4 <- summary4[, c(5, 1, 2, 3, 4, 6)]
+colnames(summary4) <- c("Variables","Estimate", "Std_Error", "t_value", "probability",
+											 "significant")
+
+summary4 <- summary4 %>% mutate(significant =
+                     case_when(probability <= 0.001 ~ "***", 
+                              probability <= 0.01 & probability > 0.001 ~ "**",
+                              probability <= 0.05 & probability > 0.01 ~ " *",
+                     					probability <= 0.1 & probability > 0.05 ~ ".",
+                     					probability > 0.1 ~ " "))
+
+summary4[, 2:5] <- round(summary4[, 2:5], 3)
+```
+
+R^2: 
+
+```{r}
+sum4$r.squared
+```
+
+Adjusted R^2:
+
+```{r}
+sum4$adj.r.squared
+```
+
+
+The predicting power only decreased from 76 to 74 percent, so the chord
+progressions are not doing the heavy lifting, but they are contributing. The 
+adjusted R^2 is also smaller, which is good because it means adding the chords
+is not overfitting the model. 
+
+### Bootstrap on Gender?
+
+The final thing that piqued my interest was the gender variable. In the first 
+model, where weeks on chart is the response variable, it seems that both male 
+and female have negative coefficients. This, I would imagine, means that songs
+that were tagged with an artist gender at all (and not all of them are), do 
+worse than songs that are not. I'm not quite sure of an easy way to see in what
+other ways these songs differ, but it is interesting. In the second model, where
+the response variable is the peak position, it seems that the female factor does
+better (negative coefficient). Neither are statistically significant at the 0.05 
+level, but almost, so I decided to do a bootstrap test of just those songs 
+tagged with a gender, to see if I could glean anything about the difference. 
+
+This is a simple t-test for the difference in means for the logged peak chart 
+position based on gender. The confidence interval does not contain zero: 
+
+```{r}
+total$Gender[total$Gender == ""] <- NA
+total_gender <- total[!is.na(total$Gender),]
+total_gender$Gender <- as.factor(total_gender$Gender)
+levels(total_gender$Gender)
+(test1 <- t.test(total_gender$logPeakPosition~total_gender$Gender)$conf.int)
+```
+
+\newpage
+
+Similarly, running a bootstrap test on the same data: 
+
+```{r}
+N <- 10000
+diff <- rep(NA, N)
+set.seed(15)
+
+for (i in 1:N) {
+  Fe <- sample(total_gender$logPeakPosition[total_gender$Gender == "F"],
+               sum(total_gender$Gender == "F"), replace = TRUE)
+  Ma <- sample(total_gender$logPeakPosition[total_gender$Gender == "M"],
+               sum(total_gender$Gender == "M"), replace = TRUE)
+  diff[i] <- mean(Fe) - mean(Ma)
+}
+
+boot_ci <- quantile(diff, c(0.025, 0.975))
+
+#Make histogram of bootstrap sample means
+hist(diff, col = "light yellow", main = "Bootstrapped Sample Means Diff in Peak
+		 Position by Gender, 10k Samples", xlab = "Logged Peak Position", 
+		 breaks = 50)
+
+#Add lines to histogram for CI's
+abline(v=boot_ci,lwd=3, col="red")
+abline(v=test1,lwd=3, col="green", lty = 2)
+legend(48,600, c("Original CI","Boot CI"), lwd=3, col = c("green","red"), 
+			 lty = c(2,1))
+
+
+```
+
+This gives almost the exact same confidence interval, and again does not contain
+zero. This would imply that songs by women actually make it higher on the charts. 
+(negative difference), contrary to what I would think based on the regression 
+output. This could mean that songs by women are actually making it higher on the 
+charts, but it could also just be that the songs that are tagged with gender in 
+the first place are biased in some way that is difficult to see. When doing a 
+t-test for the number of weeks on the chart, we actually seem to get the 
+same result - that songs by women are staying on the charts longer. 
+
+```{r}
+levels(total_gender$Gender)
+(test2 <- t.test(total_gender$logWeeks~total_gender$Gender)$conf.int)
+```
+
+Taken at face value, this would mean that songs by women do better, but once 
+again I am more suspicious of the gender data, because Billboard only provides
+this data for some of the artists. 
+
+## Conclusion
+
+This was a very interesting and entertaining project. I really enjoyed getting 
+to learn more about music data as I constructed these models. Overall, it seems
+that the chord data adds at least a little bit of predicting power to the data, 
+which is exciting, and that the chord progression I mentioned, the I.V.vi.IV, 
+does better than other chords by some metrics, such as the number of weeks on 
+the chart. Chords of that form, but a different order, also seem to cluster
+together using various methods of cluster analysis. I would love to run all of 
+this again with chord progressions and artist demographics available for all the 
+Billboard songs, because I think that would give a much clearer picture. 
+Overall, I was able to get about 55% predicting power for a model predicting 
+weeks on chart, and 76% predicting power for a model predicting peak position.  
+
+\newpage
+
+## Data Credit 
+
+* One set of Billboard data and the artist data was compiled by Daniel DeFoe and 
+Charlie Liu on Kaggle: 
+https://www.kaggle.com/danield2255/data-on-songs-from-billboard-19992019
+* The other set of Billboard data was compiled by Sean Miller on Data World: https://data.world/kcmillersean/billboard-hot-100-1958-2017 
+* The hooktheory data set was crowd-sourced on the internet. The website was put
+up by Dave Carlton, who gives permission for others to use it, and compiled into 
+a dataset by me. 
+
+
